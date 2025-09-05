@@ -1,27 +1,14 @@
-import { catchAsyncErrors } from "./catchAsyncErrors.js";
-import ErrorHandler from "./errorMiddlewares.js";
-import jwt from "jsonwebtoken";
+const jwt = require("jsonwebtoken");
 
-export const isAuthenticated = catchAsyncErrors(async (req, res, next) => {
-  const { token } = req.cookies;
-  if (!token) {
-    return next(new ErrorHandler("User is not authenticated", 400));
-  }
-  const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
-  req.user = await User.findById(decoded.id);
-  next();
-});
+module.exports = (req, res, next) => {
+  const token = req.headers["authorization"];
+  if (!token) return res.status(401).json({ message: "Auth token required" });
 
-export const isAuthorized = (...roles) => {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.roles)) {
-      return next(
-        new ErrorHandler(
-          `User with ${req.user.role} not allowed to access this resource`,
-          400
-        )
-      );
-    }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
     next();
-  };
+  } catch {
+    res.status(401).json({ message: "Invalid auth token" });
+  }
 };

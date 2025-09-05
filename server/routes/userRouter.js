@@ -1,18 +1,18 @@
-import express from "express";
-import { getAllUser, registerNewAdmin } from "../controllers/userController.js";
-import {
-  isAuthenticated,
-  isAuthorized,
-} from "../middlewares/authMiddleware.js";
-
+const express = require("express");
 const router = express.Router();
+const {
+  getAllUsers,
+  addUser,
+  deleteUser,
+  updateUser,
+} = require("../controllers/userController.js");
+const authMiddleware = require("../middlewares/authMiddleware.js");
 
-router.get("/all", isAuthenticated, isAuthorized("Admin"), getAllUser);
-router.post(
-  "/add/new-admin",
-  isAuthenticated,
-  isAuthorized("Admin"),
-  getAllUser
-);
+router.use(authMiddleware);
 
-export default router;
+router.get("/", getAllUsers);
+router.post("/", addUser);
+router.delete("/:registrationNumber", deleteUser);
+router.put("/:registrationNumber", updateUser);
+
+module.exports = router;

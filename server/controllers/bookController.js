@@ -1,45 +1,60 @@
-import { catchAsyncErrors } from "../middlewares/catchAsyncErrors.js";
-import { Book } from "../models/bookModel.js";
-import { User } from "../models/userModel.js";
-import ErrorHandler from "../middlewares/errorMiddlewares.js";
+const Book = require("../models/Book.js");
 
-export const addBook = catchAsyncErrors(async (req, res, next) => {
-  const { title, author, description, price, quantity } = req.body;
-  if (!title || !author || !description || !price || !quantity) {
-    return next(new ErrorHandler("Please fill all fields", 400));
+const getAllBooks = async (req, res) => {
+  try {
+    const books = await Book.find();
+    res.json(books);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
+};
 
-  const book = await Book.create({
-    title,
-    author,
-    description,
-    price,
-    quantity,
-  });
-  res.status(200).json({
-    success: true,
-    message: "Book added Successfully",
-    book,
-  });
-});
-
-export const deleteBook = catchAsyncErrors(async (req, res, next) => {
-  const { id } = req.params;
-  const book = Book.findById(id);
-  if (!book) {
-    return next(new ErrorHandler("Book not found", 404));
+const addBook = async (req, res) => {
+  try {
+    const {
+      title,
+      language,
+      category,
+      edition,
+      author,
+      publisherName,
+      availableCopies,
+    } = req.body;
+    const newBook = new Book({
+      title,
+      language,
+      category,
+      edition,
+      author,
+      publisherName,
+      availableCopies,
+    });
+    await newBook.save();
+    res.status(201).json({ message: "Book added successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  await book.deleteOne();
-  res.status(200).json({
-    success: true,
-    message: "Book deleted Successfully",
-  });
-});
+};
 
-export const getAllBooks = catchAsyncErrors(async (req, res, next) => {
-  const books = await Book.find();
-  res.status(200).json({
-    success: true,
-    books,
-  });
-});
+const deleteBook = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Book.findByIdAndDelete(id);
+    res.json({ message: "Book deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const updateBook = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    await Book.findByIdAndUpdate(id, updateData, { new: true });
+    res.json({ message: "Book updated successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getAllBooks, addBook, deleteBook, updateBook };

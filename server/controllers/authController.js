@@ -1,251 +1,91 @@
-import { catchAsyncErrors } from "../middlewares/catchAsyncErrors.js";
-import ErrorHandler from "../middlewares/errorMiddlewares.js";
-import { User } from "../models/userModel.js";
-import bcrypt from "bcrypt";
-import crypto from "crypto";
-import { sendVerificationCode } from "../utils/sendVerificationCode.js";
-import { sendToken } from "../utils/sendToken.js";
-import { sendEmail } from "../utils/sendMail.js";
-import { generateForgetPasswordEmailTemplate } from "../utils/emailTemplates.js";
+const User = require('../models/User.js');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const transporter = require('../utils/mailer.js');
 
-export const register = catchAsyncErrors(async (req, res, next) => {
+const otpStore = new Map(); // temporary OTP store
+
+const signUp = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password) {
-      return next(new ErrorHandler("Please enter all fields ", 400));
-    }
-    const isRegistered = await User.findOne({ email, accountVerified: true });
-    if (isRegistered) {
-      return next(new ErrorHandler("User Already Exsit", 400));
-    }
-    const registerationAttemptsByUser = await User.find({
-      email,
-      accountVerified: false,
-    });
-    if (registerationAttemptsByUser.length >= 5) {
-      return next(
-        new ErrorHandler(
-          "you have exceeded the number of registration attempt. Please contact support",
-          400
-        )
-      );
-    }
-
-    if (password.length < 8 || password.length >= 16) {
-      return next(
-        new ErrorHandler("Password must be 8 and 16 characters.", 400)
-      );
-    }
-
+    const { firstName, lastName, contactNumber, email, username, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await User.create({
-      name,
+    const user = new User({
+      firstName,
+      lastName,
+      contactNumber,
       email,
+      registrationNumber: username,
       password: hashedPassword,
+      isAdmin: false
     });
-    const verificationCode = await user.generateVerificationCode();
     await user.save();
-    sendVerificationCode(verificationCode, email, res);
-  } catch (error) {
-    next(error);
+    res.status(201).json({ message: "User registered successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-});
+};
 
-export const verifyOtp = catchAsyncErrors(async (req, res, next) => {
-  const { email, otp } = req.body;
-  if (!email || !otp) {
-    return next(new ErrorHandler("Email or otp missing", 400));
-  }
+const signIn = async (req, res) => {
   try {
-    const userAllEntries = await User.find({
-      email,
-      accountVerified: false,
-    }).sort({ createdAt: -1 });
-    if (!userAllEntries) {
-      return next(new ErrorHandler("user not found", 404));
-    }
-    let user;
-    if (userAllEntries.length > 1) {
-      user = userAllEntries[0];
-      await User.deleteMany({
-        _id: { $ne: user._id },
-        email,
-        accountVerified: false,
-      });
-    } else {
-      user = userAllEntries[0];
-    }
-    if (user.verificationCode !== Number(otp)) {
-      return next(new ErrorHandler("Invalid Otp", 400));
-    }
-    const currentTime = Date.now();
-    const verificationCodeExpire = new Date(
-      user.verificationCodeExpire
-    ).getTime();
-    if (currentTime > verificationCodeExpire) {
-      return next(new ErrorHandler("OTP Expired .", 400));
-    }
-    user.accountVerified = true;
-    user.verificationCode = null;
-    user.verificationCodeExpire = null;
-    await user.save({ validateModifiedOnly: true });
+    const { username, password } = req.body;
+    const user = await User.findOne({ registrationNumber: username });
+    if (!user) return res.status(400).json({ message: 'Invalid credentials' });
 
-    sendToken(user, 200, "Account Verified", res);
-  } catch (error) {
-    return next(new ErrorHandler("Internal Server Error", 500));
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(400).json({ message: 'Invalid credentials' });
+
+    const token = jwt.sign({ id: user._id, isAdmin: user.isAdmin }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-});
+};
 
-export const login = catchAsyncErrors(async (req, res, next) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return next(new ErrorHandler("Please enter all fields", 400));
-  }
-  const user = await User.findOne({ email, accountVerified: true }).select(
-    "password"
-  );
-  if (!user) {
-    return next(new ErrorHandler("Invalid email or password", 400));
-  }
-  const isPasswordMatched = await bcrypt.compare(password, user.password);
-  if (!isPasswordMatched) {
-    return next(new ErrorHandler("Invalid email or password", 400));
-  }
-  sendToken(user, 200, "User login successfully.", res);
-});
-
-export const logout = catchAsyncErrors(async (req, res, next) => {
-  res
-    .status(200)
-    .cookie("token", "", {
-      expires: new Date(Date.now()),
-      httpOnly: true,
-    })
-    .json({
-      success: true,
-      message: "Logged Out Successfully",
-    });
-});
-
-export const getUser = catchAsyncErrors(async (req, res, next) => {
-  const user = req.user;
-  res.status(200).json({
-    success: true,
-    user,
-  });
-});
-
-export const forgetPassword = catchAsyncErrors(async (req, res, next) => {
-  if (!req.body.email) {
-    return next(new ErrorHandler("Email is required", 400));
-  }
-  const user = await User.findOne({
-    email: req.body.email,
-    accountVerified: true,
-  });
-  if (!user) {
-    return next(new ErrorHandler("Invalid email", 400));
-  }
-
-  const resetToken = user.getResetPasswordToken();
-  await user.save({ validateBeforeSave: false });
-
-  const resetPasswordUrl = `${process.env.FRONTEND_URL}/password/reset/${resetToken}`;
-
-  const message = generateForgetPasswordEmailTemplate(resetPasswordUrl);
+const forgotPassword = async (req, res) => {
   try {
-    await sendEmail({
-      email: user.email,
-      subject: "Library Management Reset Password ",
-      message,
+    const { username } = req.body;
+    const user = await User.findOne({ registrationNumber: username });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    otpStore.set(username, otp);
+
+    await transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: user.email,
+      subject: "Your OTP for password reset",
+      text: `Your OTP is ${otp}`
     });
-    res.status(200).json({
-      success: true,
-      message: `Email send to ${user.email} Successfully`,
-    });
-  } catch (error) {
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpire = undefined;
-    await user.save({ validateBeforeSave: false });
-    return next(new ErrorHandler(error.message, 500));
-  }
-});
 
-export const resetPassword = catchAsyncErrors(async (req, res, next) => {
-  const { token } = req.params;
-  const resetPasswordToken = crypto
-    .createHash("sha256")
-    .update(token)
-    .digest("hex");
-
-  const user = await User.findOne({
-    resetPasswordToken,
-    resetPasswordExpire: { $gt: Date.now() },
-  });
-  if (!user) {
-    return next(new ErrorHandler("Reset password token is invalid", 400));
+    res.json({ message: 'OTP sent to your email' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  if (req.body.password !== req.body.confirmPassword) {
-    return next(
-      new ErrorHandler("Password and confirmPassword do not match", 400)
-    );
-  }
-  if (
-    req.body.password.length < 8 ||
-    req.body.password.length > 16 ||
-    req.body.confirmPassword.length < 8 ||
-    req.body.confirmPassword.length > 16
-  ) {
-    return next(
-      new ErrorHandler("Password must be between 8 to 16 characters", 400)
-    );
-  }
+};
 
-  const hashedPassword = await bcrypt.hash(req.body.password, 10);
-  user.password = hashedPassword;
-  user.resetPasswordToken = undefined;
-  user.resetPasswordExpire = undefined;
-
-  await user.save();
-  sendToken(user, 200, "Password reset Successfully", res);
-});
-
-export const updatePassword = catchAsyncErrors(async (req, res, next) => {
-  const user = await User.findById(req.user._id).select("+password");
-  const { currentPassword, newPassword, confirmNewPassword } = req.body;
-  if (!currentPassword || !newPassword || !confirmNewPassword) {
-    return next(new ErrorHandler("Please enter all fields", 400));
+const verifyOtp = (req, res) => {
+  const { username, otp } = req.body;
+  if (otpStore.get(username) === otp) {
+    otpStore.delete(username);
+    res.json({ message: 'OTP verified' });
+  } else {
+    res.status(400).json({ message: 'Invalid OTP' });
   }
+};
 
-  const isPasswordMatched = await bcrypt.compare(
-    currentPassword,
-    user.password
-  );
-  if (!isPasswordMatched) {
-    return next(new ErrorHandler("Current Password is incorrect", 400));
-  }
-  if (
-    newPassword.length < 8 ||
-    newPassword.length > 16 ||
-    confirmNewPassword.length < 8 ||
-    confirmNewPassword.length > 16
-  ) {
-    return next(
-      new ErrorHandler("Password must be between 8 and 16 characters", 400)
-    );
-  }
+const resetPassword = async (req, res) => {
+  try {
+    const { username, newPassword, confirmPassword } = req.body;
+    if (newPassword !== confirmPassword) return res.status(400).json({ message: 'Passwords do not match' });
 
-  if (newPassword !== confirmNewPassword) {
-    return next(
-      new ErrorHandler("New Password and Confirm Password do not match", 400)
-    );
-  }
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await User.findOneAndUpdate({ registrationNumber: username }, { password: hashed });
 
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
-  user.password = hashedPassword;
-  await user.save();
-  res.status(200).json({
-    success: true,
-    message: "Password updated",
-  });
-});
+    res.json({ message: 'Password reset successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+module.exports ={signUp,signIn,forgotPassword,verifyOtp,resetPassword}
