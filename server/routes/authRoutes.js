@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const {validateUser} = require("../validation/userValidation.js")
 const {
   signUp,
   signIn,
@@ -8,7 +9,7 @@ const {
   resetPassword,
 } = require("../controllers/authController");
 
-router.post("/signup", signUp);
+router.post("/signup",validateUser,signUp);
 router.post("/signin", signIn);
 router.post("/forgot-password", forgotPassword);
 router.post("/verify-otp", verifyOtp);

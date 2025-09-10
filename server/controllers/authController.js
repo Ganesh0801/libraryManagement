@@ -2,6 +2,8 @@ const User = require('../models/User.js');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const transporter = require('../utils/mailer.js');
+require('dotenv').config();
+const forgetMailContent = require("../mailTemplate/forgotPassword_Mail.js")
 
 const otpStore = new Map(); // temporary OTP store
 
@@ -9,6 +11,16 @@ const signUp = async (req, res) => {
   try {
     const { firstName, lastName, contactNumber, email, username, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
+
+     const existingUser = await User.findOne({
+      $or: [{ email: email }, { registrationNumber: username }]
+    });
+
+    if (existingUser) {
+      console.log("true")
+      return res.status(400).json({ error: 'Email or username already in use' });
+    }
+   
     const user = new User({
       firstName,
       lastName,
@@ -16,8 +28,10 @@ const signUp = async (req, res) => {
       email,
       registrationNumber: username,
       password: hashedPassword,
+      
       isAdmin: false
     });
+     console.log("user",user)
     await user.save();
     res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
@@ -35,7 +49,7 @@ const signIn = async (req, res) => {
     if (!valid) return res.status(400).json({ message: 'Invalid credentials' });
 
     const token = jwt.sign({ id: user._id, isAdmin: user.isAdmin }, process.env.JWT_SECRET, { expiresIn: '1d' });
-    res.json({ token });
+    res.json({ message:"user signIn",token });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -49,12 +63,12 @@ const forgotPassword = async (req, res) => {
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore.set(username, otp);
-
+    const tempOtp = forgetMailContent(otp)
     await transporter.sendMail({
-      from: process.env.SMTP_USER,
+      from: process.env.SMTP_MAIL,
       to: user.email,
-      subject: "Your OTP for password reset",
-      text: `Your OTP is ${otp}`
+      subject: "Your OTP for forgot password ",
+      html:tempOtp
     });
 
     res.json({ message: 'OTP sent to your email' });

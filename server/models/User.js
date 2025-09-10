@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const uniqueValidator = require("mongoose-unique-validator");
 
 const borrowedBookSchema = new mongoose.Schema(
   {
@@ -15,13 +16,13 @@ const borrowedBookSchema = new mongoose.Schema(
 
 const userSchema = new mongoose.Schema(
   {
-    registrationNumber: { type: String, unique: true },
+    registrationNumber: { type: String, unique: true, required: true },
     firstName: String,
     lastName: String,
     contactNumber: String,
-    email: String,
+    email: { type: String, unique: true, required: true },
     password: String,
-    name: String, 
+    username: String,
     class: String,
     section: String,
     gender: String,
@@ -32,5 +33,8 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Apply the uniqueValidator plugin to userSchema
+userSchema.plugin(uniqueValidator, { message: '{PATH} already exists.' });
 
 module.exports = mongoose.model("User", userSchema);
